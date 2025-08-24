@@ -27,239 +27,33 @@ const Index = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animationFrameRef = useRef<number>();
 
-  const detectPitchFromBuffer = async (audioBuffer: AudioBuffer): Promise<{ notes: MidiNote[], tempo: number }> => {
-    const sampleRate = audioBuffer.sampleRate;
-    const channelData = audioBuffer.getChannelData(0);
-    
-    console.log(`Processing audio: ${channelData.length} samples, ${sampleRate} Hz`);
-    
-    // Enhanced pitch detection with autocorrelation for better accuracy
-    const windowSize = 4096; // Larger window for better frequency resolution
-    const hopSize = 1024;    // Less overlap for performance
-    const minFreq = 80;
-    const maxFreq = 2000;
-    
-    // More robust tempo detection using spectral flux
-    const detectTempo = (data: Float32Array): number => {
-      const frameSize = 2048;
-      const hopSize = 512;
-      const spectralFlux: number[] = [];
-      let prevSpectrum: number[] = [];
+  // Use Web Worker for audio processing to prevent UI freezing
+  const processAudioWithWorker = async (audioBuffer: AudioBuffer): Promise<{ notes: MidiNote[], tempo: number }> => {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker('/audio-worker.js');
       
-      // Calculate spectral flux
-      for (let i = 0; i < data.length - frameSize; i += hopSize) {
-        const window = data.slice(i, i + frameSize);
-        const spectrum = getSpectrum(window);
-        
-        if (prevSpectrum.length > 0) {
-          let flux = 0;
-          for (let j = 0; j < Math.min(spectrum.length, prevSpectrum.length); j++) {
-            const diff = spectrum[j] - prevSpectrum[j];
-            flux += diff > 0 ? diff : 0; // Only positive differences
-          }
-          spectralFlux.push(flux);
+      worker.onmessage = (e) => {
+        const { success, result, error } = e.data;
+        if (success) {
+          resolve(result);
+        } else {
+          reject(new Error(error));
         }
-        prevSpectrum = spectrum;
-      }
+        worker.terminate();
+      };
       
-      // Find peaks in spectral flux (onsets)
-      const onsets: number[] = [];
-      const threshold = Math.max(...spectralFlux) * 0.3;
+      worker.onerror = (error) => {
+        reject(error);
+        worker.terminate();
+      };
       
-      for (let i = 1; i < spectralFlux.length - 1; i++) {
-        if (spectralFlux[i] > threshold && 
-            spectralFlux[i] > spectralFlux[i - 1] && 
-            spectralFlux[i] > spectralFlux[i + 1]) {
-          onsets.push((i * hopSize) / sampleRate);
-        }
-      }
-      
-      if (onsets.length < 3) return 120; // Fallback
-      
-      // Calculate inter-onset intervals
-      const intervals: number[] = [];
-      for (let i = 1; i < onsets.length; i++) {
-        const interval = onsets[i] - onsets[i - 1];
-        if (interval > 0.2 && interval < 2.0) { // Reasonable tempo range
-          intervals.push(interval);
-        }
-      }
-      
-      if (intervals.length === 0) return 120;
-      
-      // Find most common interval using clustering
-      intervals.sort((a, b) => a - b);
-      const clusters: number[][] = [];
-      const tolerance = 0.1;
-      
-      for (const interval of intervals) {
-        let added = false;
-        for (const cluster of clusters) {
-          if (Math.abs(cluster[0] - interval) < tolerance) {
-            cluster.push(interval);
-            added = true;
-            break;
-          }
-        }
-        if (!added) {
-          clusters.push([interval]);
-        }
-      }
-      
-      // Find largest cluster
-      const largestCluster = clusters.reduce((max, cluster) => 
-        cluster.length > max.length ? cluster : max, []);
-      
-      const avgInterval = largestCluster.reduce((sum, val) => sum + val, 0) / largestCluster.length;
-      const bpm = 60 / avgInterval;
-      
-      return Math.round(Math.max(60, Math.min(180, bpm)));
-    };
-    
-    const detectedTempo = detectTempo(channelData);
-    console.log(`Detected tempo: ${detectedTempo} BPM`);
-    
-    // Enhanced note detection with autocorrelation
-    const detectedNotes: MidiNote[] = [];
-    const processChunkSize = Math.floor(channelData.length / 20); // Process in chunks
-    
-    for (let chunk = 0; chunk < 20; chunk++) {
-      const start = chunk * processChunkSize;
-      const end = Math.min(start + processChunkSize, channelData.length);
-      
-      for (let i = start; i < end - windowSize; i += hopSize) {
-        const window = channelData.slice(i, i + windowSize);
-        const time = i / sampleRate;
-        
-        // Calculate RMS for amplitude
-        const amplitude = Math.sqrt(window.reduce((sum, val) => sum + val * val, 0) / window.length);
-        if (amplitude < 0.02) continue; // Skip quiet sections
-        
-        // Autocorrelation-based pitch detection (more accurate than FFT for single pitches)
-        const pitch = autocorrelationPitch(window, sampleRate, minFreq, maxFreq);
-        
-        if (pitch > 0) {
-          const midiNote = frequencyToMidi(pitch);
-          
-          if (midiNote >= 36 && midiNote <= 96) {
-            const velocity = Math.min(127, Math.max(30, Math.floor(amplitude * 200)));
-            
-            detectedNotes.push({
-              time,
-              pitch: Math.round(midiNote), // Round to nearest semitone
-              duration: hopSize / sampleRate,
-              velocity
-            });
-          }
-        }
-      }
-      
-      // Yield control to prevent freezing
-      if (chunk % 5 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 1));
-      }
-    }
-    
-    // Aggressive note consolidation to prevent timbre misinterpretation
-    const consolidatedNotes: MidiNote[] = [];
-    const noteTolerance = 0.5; // Half semitone tolerance
-    const timeTolerance = 0.15; // 150ms tolerance
-    
-    detectedNotes.sort((a, b) => a.time - b.time);
-    
-    for (const note of detectedNotes) {
-      const existing = consolidatedNotes.find(n => 
-        Math.abs(n.pitch - note.pitch) <= noteTolerance &&
-        Math.abs(n.time - note.time) <= timeTolerance
-      );
-      
-      if (existing) {
-        // Merge with existing note
-        existing.duration = Math.max(existing.duration, note.time + note.duration - existing.time);
-        existing.velocity = Math.max(existing.velocity, note.velocity);
-      } else {
-        // Find overlapping notes and merge
-        let merged = false;
-        for (const existing of consolidatedNotes) {
-          if (Math.abs(existing.pitch - note.pitch) <= noteTolerance &&
-              note.time < existing.time + existing.duration + 0.05) {
-            // Extend existing note
-            existing.duration = Math.max(existing.duration, note.time + note.duration - existing.time);
-            existing.velocity = Math.max(existing.velocity, note.velocity);
-            merged = true;
-            break;
-          }
-        }
-        
-        if (!merged) {
-          consolidatedNotes.push({ ...note });
-        }
-      }
-    }
-    
-    // Final cleanup - minimum note duration
-    const finalNotes = consolidatedNotes
-      .filter(note => note.duration >= 0.1) // Minimum 100ms duration
-      .map(note => ({
-        ...note,
-        duration: Math.max(note.duration, 0.1) // Ensure minimum duration
-      }));
-    
-    console.log(`Detected ${finalNotes.length} consolidated notes with tempo ${detectedTempo} BPM`);
-    
-    return { notes: finalNotes, tempo: detectedTempo };
-  };
-
-  // Autocorrelation-based pitch detection (more accurate for monophonic content)
-  const autocorrelationPitch = (buffer: Float32Array, sampleRate: number, minFreq: number, maxFreq: number): number => {
-    const maxPeriod = Math.floor(sampleRate / minFreq);
-    const minPeriod = Math.floor(sampleRate / maxFreq);
-    const correlations: number[] = [];
-    
-    // Calculate autocorrelation
-    for (let period = minPeriod; period <= maxPeriod; period++) {
-      let correlation = 0;
-      for (let i = 0; i < buffer.length - period; i++) {
-        correlation += buffer[i] * buffer[i + period];
-      }
-      correlations.push(correlation / (buffer.length - period));
-    }
-    
-    // Find peak correlation
-    let maxCorrelation = 0;
-    let bestPeriod = 0;
-    
-    for (let i = 0; i < correlations.length; i++) {
-      if (correlations[i] > maxCorrelation) {
-        maxCorrelation = correlations[i];
-        bestPeriod = minPeriod + i;
-      }
-    }
-    
-    // Require significant correlation to avoid noise
-    if (maxCorrelation < 0.3) return 0;
-    
-    return sampleRate / bestPeriod;
-  };
-  
-  // Get spectrum for tempo detection
-  const getSpectrum = (data: Float32Array): number[] => {
-    const N = data.length;
-    const spectrum: number[] = [];
-    
-    for (let k = 0; k < N / 2; k++) {
-      let real = 0, imag = 0;
-      
-      for (let n = 0; n < N; n++) {
-        const angle = -2 * Math.PI * k * n / N;
-        real += data[n] * Math.cos(angle);
-        imag += data[n] * Math.sin(angle);
-      }
-      
-      spectrum.push(Math.sqrt(real * real + imag * imag));
-    }
-    
-    return spectrum;
+      // Send audio data to worker
+      const audioData = audioBuffer.getChannelData(0);
+      worker.postMessage({
+        audioData: Array.from(audioData), // Convert to regular array for transfer
+        sampleRate: audioBuffer.sampleRate
+      });
+    });
   };
 
   // Find the dominant frequency in the spectrum
@@ -353,15 +147,15 @@ const Index = () => {
       setDuration(buffer.duration);
       setProcessingProgress(30);
       
-      // Extract MIDI data from audio
-      const result = await detectPitchFromBuffer(buffer);
+      // Extract MIDI data from audio using Web Worker
+      const result = await processAudioWithWorker(buffer);
       setProcessingProgress(80);
       
       setDetectedTempo(result.tempo);
       setMidiData(result.notes);
       setProcessingProgress(100);
       
-      toast.success(`Audio processed successfully! Detected ${result.notes.length} notes.`);
+      toast.success(`Audio processed successfully! Detected ${result.notes.length} notes at ${result.tempo} BPM.`);
     } catch (error) {
       toast.error("Failed to process audio file");
       console.error(error);
