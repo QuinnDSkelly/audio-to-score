@@ -38,9 +38,9 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     const height = rect.height;
 
     // Piano roll dimensions
-    const pianoWidth = 80;
+    const pianoWidth = 100; // Wider piano for better labels
     const rollWidth = width - pianoWidth;
-    const noteHeight = height / 61; // 61 keys from C2 to C7
+    const noteHeight = Math.max(12, height / 61); // Minimum height for legibility
     const minPitch = 36; // C2
     const maxPitch = 96; // C7
     const pitchRange = maxPitch - minPitch;
@@ -73,17 +73,13 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       ctx.lineWidth = 0.5;
       ctx.strokeRect(0, y, pianoWidth, noteHeight);
       
-      // Note label (all notes visible when space allows)
-      const labelText = `${noteName}${octave}`;
-      ctx.fillStyle = isBlackKey ? `hsl(${pianoWhite})` : `hsl(${pianoBlack})`;
-      ctx.font = noteHeight > 14 ? '10px monospace' : '8px monospace';
-      ctx.textAlign = 'center';
-      
-      // Only show labels if there's enough vertical space
-      if (noteHeight > 12) {
-        ctx.fillText(labelText, pianoWidth / 2, y + noteHeight / 2 + 2);
-      } else if (noteIndex === 0) { // Show only C notes when space is limited
-        ctx.fillText(`C${octave}`, pianoWidth / 2, y + noteHeight / 2 + 2);
+      // Only show C note labels for cleaner appearance
+      if (noteIndex === 0) { // C notes only
+        const labelText = `C${octave}`;
+        ctx.fillStyle = isBlackKey ? `hsl(${pianoWhite})` : `hsl(${pianoBlack})`;
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(labelText, pianoWidth / 2, y + noteHeight / 2 + 4);
       }
     }
 
@@ -162,10 +158,12 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       ctx.strokeRect(x, y, noteWidth, noteHeight - 1);
       
       // Add note label if note is wide enough
-      if (noteWidth > 25 && noteHeight > 12) {
+      if (noteWidth > 15 && noteHeight > 10) {
         const { noteName, octave } = getNoteInfo(note.pitch);
-        ctx.fillStyle = isActive ? `hsl(${accent.h}, ${accent.s}%, 20%)` : `hsl(${primary.h}, ${primary.s}%, 90%)`;
-        ctx.font = '9px monospace';
+        ctx.fillStyle = isActive ? 
+          `hsl(${accent.h}, ${accent.s}%, 10%)` : 
+          `hsl(${primary.h}, ${primary.s}%, 95%)`;
+        ctx.font = '8px monospace';
         ctx.textAlign = 'left';
         ctx.fillText(`${noteName}${octave}`, x + 2, y + noteHeight / 2 + 3);
       }

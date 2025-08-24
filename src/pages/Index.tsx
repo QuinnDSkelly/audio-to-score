@@ -31,45 +31,44 @@ const Index = () => {
     const channelData = audioBuffer.getChannelData(0);
     const notes: MidiNote[] = [];
     
-    const windowSize = 2048;
-    const hopSize = 512;
+    const windowSize = 4096; // Larger window for better pitch accuracy
+    const hopSize = 1024; // Larger hop size to reduce duplicates
     const minFreq = 60; // ~B1
     const maxFreq = 2000; // ~B6
     
     console.log(`Processing audio: ${channelData.length} samples, ${sampleRate} Hz`);
     
-    // Improved tempo detection using onset detection
+    // Improved tempo detection
     const detectTempo = (data: Float32Array) => {
       const onsets: number[] = [];
-      const threshold = 0.01;
+      const threshold = 0.015; // Higher threshold to reduce false onsets
       const windowSize = 1024;
       
-      // Detect energy peaks for onset detection
       for (let i = windowSize; i < data.length - windowSize; i += hopSize) {
         const currentEnergy = getRMS(data.slice(i, i + windowSize));
         const previousEnergy = getRMS(data.slice(i - windowSize, i));
         
-        if (currentEnergy > threshold && currentEnergy > previousEnergy * 1.5) {
+        if (currentEnergy > threshold && currentEnergy > previousEnergy * 2.0) { // Higher multiplier
           onsets.push(i / sampleRate);
         }
       }
       
-      if (onsets.length < 2) return 120; // Default tempo
+      if (onsets.length < 2) return 120;
       
-      // Calculate intervals between onsets
       const intervals = onsets.slice(1).map((onset, i) => onset - onsets[i]);
       const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
-      
-      // Convert to BPM (assuming quarter note intervals)
       const bpm = Math.round(60 / avgInterval);
-      return Math.max(60, Math.min(200, bpm)); // Clamp to reasonable range
+      return Math.max(60, Math.min(200, bpm));
     };
     
     const tempo = detectTempo(channelData);
     const beatDuration = 60 / tempo;
-    const quantizeUnit = beatDuration / 4; // 16th note quantization
+    const quantizeUnit = beatDuration / 8; // 8th note quantization for better timing
     
     console.log(`Detected tempo: ${tempo} BPM, beat duration: ${beatDuration}s`);
+    
+    let lastValidPitch = 0;
+    let lastValidTime = 0;
     
     for (let i = 0; i < channelData.length - windowSize; i += hopSize) {
       const window = channelData.slice(i, i + windowSize);
@@ -80,51 +79,63 @@ const Index = () => {
         window[j] *= 0.54 - 0.46 * Math.cos(2 * Math.PI * j / (windowSize - 1));
       }
       
-      // Enhanced pitch detection
       const pitch = detectPitchFromWindow(window, sampleRate, minFreq, maxFreq);
       
       if (pitch > 0) {
         const midiNote = frequencyToMidi(pitch);
         const amplitude = getRMS(window);
         
-        // Improved amplitude threshold and velocity calculation
-        if (amplitude > 0.005) {
-          // Quantize timing to musical grid
+        // Higher threshold and better filtering to reduce noise
+        if (amplitude > 0.008 && midiNote >= 36 && midiNote <= 96) {
           const quantizedTime = Math.round(time / quantizeUnit) * quantizeUnit;
           
-          // Check if this continues a previous note
-          const lastNote = notes[notes.length - 1];
-          const pitchTolerance = 0.5; // tighter tolerance
+          // Better duplicate filtering - check pitch difference and time separation
+          const pitchDifference = Math.abs(midiNote - lastValidPitch);
+          const timeDifference = quantizedTime - lastValidTime;
           
-          if (lastNote && 
-              Math.abs(lastNote.pitch - midiNote) <= pitchTolerance && 
-              Math.abs(quantizedTime - (lastNote.time + lastNote.duration)) < quantizeUnit) {
-            // Extend the previous note and update velocity to max
-            lastNote.duration = quantizedTime - lastNote.time + quantizeUnit;
-            lastNote.velocity = Math.max(lastNote.velocity, Math.min(127, Math.floor(amplitude * 300 + 40)));
-          } else {
-            // Create new note with better velocity scaling
-            const velocity = Math.min(127, Math.max(40, Math.floor(amplitude * 300 + 40)));
-            notes.push({
-              time: quantizedTime,
-              pitch: midiNote,
-              duration: quantizeUnit, // Start with minimum duration
-              velocity
-            });
+          // Only create note if pitch is different or enough time has passed
+          if (pitchDifference > 1 || timeDifference >= quantizeUnit) {
+            // Check if we should extend the last note instead
+            const lastNote = notes[notes.length - 1];
+            const pitchTolerance = 1; // Semitone tolerance
+            
+            if (lastNote && 
+                Math.abs(lastNote.pitch - midiNote) <= pitchTolerance && 
+                timeDifference < quantizeUnit * 2) {
+              // Extend the previous note
+              lastNote.duration = quantizedTime - lastNote.time + quantizeUnit;
+              lastNote.velocity = Math.max(lastNote.velocity, Math.min(127, Math.floor(amplitude * 200 + 60)));
+            } else {
+              // Create new note
+              const velocity = Math.min(127, Math.max(60, Math.floor(amplitude * 200 + 60)));
+              notes.push({
+                time: quantizedTime,
+                pitch: midiNote,
+                duration: quantizeUnit,
+                velocity
+              });
+              lastValidPitch = midiNote;
+              lastValidTime = quantizedTime;
+            }
           }
         }
       }
     }
     
-    // Filter and clean up notes with musical durations
-    const cleanedNotes = notes
-      .filter(note => note.duration >= quantizeUnit && note.pitch >= 36 && note.pitch <= 96) // C2 to C7
-      .map(note => ({
-        ...note,
-        duration: Math.max(quantizeUnit, Math.round(note.duration / quantizeUnit) * quantizeUnit) // Snap to musical grid
-      }));
+    // Final cleanup - merge notes that are too close together
+    const cleanedNotes = [];
+    let lastAddedNote = null;
     
-    console.log(`Detected ${cleanedNotes.length} notes with tempo ${tempo} BPM`);
+    for (const note of notes) {
+      if (!lastAddedNote || 
+          Math.abs(note.pitch - lastAddedNote.pitch) > 1 ||
+          note.time - (lastAddedNote.time + lastAddedNote.duration) >= quantizeUnit / 2) {
+        cleanedNotes.push(note);
+        lastAddedNote = note;
+      }
+    }
+    
+    console.log(`Detected ${cleanedNotes.length} unique notes with tempo ${tempo} BPM`);
     return cleanedNotes;
   };
 
@@ -218,11 +229,12 @@ const Index = () => {
   };
 
   const updateTime = () => {
-    if (audioRef.current) {
+    if (audioRef.current && !audioRef.current.paused && !audioRef.current.ended) {
       setCurrentTime(audioRef.current.currentTime);
-      if (isPlaying && !audioRef.current.paused && !audioRef.current.ended) {
-        animationFrameRef.current = requestAnimationFrame(updateTime);
-      }
+      animationFrameRef.current = requestAnimationFrame(updateTime);
+    } else if (audioRef.current?.ended) {
+      setIsPlaying(false);
+      setCurrentTime(0);
     }
   };
 

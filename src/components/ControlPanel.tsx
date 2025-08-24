@@ -37,10 +37,10 @@ export const ControlPanel = ({
   };
 
   return (
-    <Card className="p-6 bg-gradient-subtle">
-      <div className="flex items-center justify-between">
+    <Card className="p-6 bg-gradient-subtle w-full max-w-6xl mx-auto">
+      <div className="flex items-center justify-between gap-8">
         {/* Transport Controls */}
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-4 flex-shrink-0">
           <Button
             onClick={onPlayPause}
             size="lg"
@@ -62,18 +62,18 @@ export const ControlPanel = ({
           </Button>
         </div>
 
-        {/* Time Display and Seek */}
-        <div className="flex-1 mx-8">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-mono text-muted-foreground">
+        {/* Time Display and Seek - Expanded */}
+        <div className="flex-1 mx-12 min-w-96">
+          <div className="flex items-center justify-between mb-3 px-4">
+            <span className="text-base font-mono text-muted-foreground font-semibold">
               {formatTime(currentTime)}
             </span>
-            <span className="text-sm font-mono text-muted-foreground">
+            <span className="text-base font-mono text-muted-foreground font-semibold">
               {formatTime(duration)}
             </span>
           </div>
           
-          <div className="relative w-full">
+          <div className="relative w-full px-4">
             <Slider
               value={[currentTime]}
               max={duration}
@@ -81,17 +81,11 @@ export const ControlPanel = ({
               onValueChange={handleSeek}
               className="w-full"
             />
-            {/* Start and end markers */}
-            <div className="absolute left-0 top-6 w-2 h-2 bg-primary rounded-full border-2 border-background shadow-sm" />
-            <div className="absolute right-0 top-6 w-2 h-2 bg-destructive rounded-full border-2 border-background shadow-sm" />
-            {/* Progress indicators */}
-            <div className="absolute left-0 top-8 text-xs text-muted-foreground font-mono">START</div>
-            <div className="absolute right-0 top-8 text-xs text-muted-foreground font-mono text-right">END</div>
           </div>
         </div>
 
         {/* Export Controls */}
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-4 flex-shrink-0">
           <Button
             onClick={onExport}
             disabled={!canExport}
