@@ -29,8 +29,14 @@ export const WaveformVisualization = ({
     const width = rect.width;
     const height = rect.height;
 
+    // Get computed CSS variable values
+    const computedStyle = getComputedStyle(canvas);
+    const waveformBgColor = computedStyle.getPropertyValue('--waveform-bg').trim();
+    const waveformColor = computedStyle.getPropertyValue('--waveform').trim();
+    const primaryColor = computedStyle.getPropertyValue('--primary').trim();
+
     // Clear canvas
-    ctx.fillStyle = 'hsl(var(--waveform-bg))';
+    ctx.fillStyle = `hsl(${waveformBgColor})`;
     ctx.fillRect(0, 0, width, height);
 
     // Get audio data
@@ -60,20 +66,20 @@ export const WaveformVisualization = ({
       ctx.lineTo(x, yMax);
     }
     
-    ctx.strokeStyle = 'hsl(var(--waveform))';
+    ctx.strokeStyle = `hsl(${waveformColor})`;
     ctx.lineWidth = 1;
     ctx.stroke();
 
     // Draw progress indicator
     const progressX = (currentTime / audioBuffer.duration) * width;
-    ctx.fillStyle = 'hsl(var(--primary))';
+    ctx.fillStyle = `hsl(${primaryColor})`;
     ctx.fillRect(progressX - 1, 0, 2, height);
 
     // Draw played section overlay
     if (currentTime > 0) {
       const gradient = ctx.createLinearGradient(0, 0, progressX, 0);
-      gradient.addColorStop(0, 'hsl(var(--primary) / 0.3)');
-      gradient.addColorStop(1, 'hsl(var(--primary) / 0.1)');
+      gradient.addColorStop(0, `hsl(${primaryColor} / 0.3)`);
+      gradient.addColorStop(1, `hsl(${primaryColor} / 0.1)`);
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, progressX, height);
     }
