@@ -61,7 +61,33 @@ export default {
 					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
+				},
+				// Audio-specific colors
+				waveform: {
+					DEFAULT: 'hsl(var(--waveform))',
+					bg: 'hsl(var(--waveform-bg))'
+				},
+				piano: {
+					white: 'hsl(var(--piano-white))',
+					black: 'hsl(var(--piano-black))'
+				},
+				note: {
+					active: 'hsl(var(--note-active))',
+					inactive: 'hsl(var(--note-inactive))'
 				}
+			},
+			backgroundImage: {
+				'gradient-primary': 'var(--gradient-primary)',
+				'gradient-accent': 'var(--gradient-accent)',
+				'gradient-subtle': 'var(--gradient-subtle)'
+			},
+			boxShadow: {
+				'glow': 'var(--shadow-glow)',
+				'card': 'var(--shadow-card)'
+			},
+			transitionTimingFunction: {
+				'smooth': 'var(--transition-smooth)',
+				'bounce': 'var(--transition-bounce)'
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
