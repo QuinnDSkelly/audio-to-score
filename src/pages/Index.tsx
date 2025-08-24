@@ -169,20 +169,24 @@ const Index = () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
+      setIsPlaying(false);
     } else {
-      audioRef.current.play().catch(error => {
+      audioRef.current.play().then(() => {
+        setIsPlaying(true);
+        updateTime();
+      }).catch(error => {
         toast.error("Failed to play audio");
         console.error(error);
       });
-      updateTime();
     }
-    setIsPlaying(!isPlaying);
   };
 
   const updateTime = () => {
-    if (audioRef.current && isPlaying) {
+    if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime);
-      animationFrameRef.current = requestAnimationFrame(updateTime);
+      if (isPlaying && !audioRef.current.paused && !audioRef.current.ended) {
+        animationFrameRef.current = requestAnimationFrame(updateTime);
+      }
     }
   };
 
@@ -204,6 +208,32 @@ const Index = () => {
     a.click();
     URL.revokeObjectURL(url);
     toast.success("MIDI file exported!");
+  };
+
+  const handleReset = () => {
+    // Stop audio if playing
+    if (audioRef.current) {
+      audioRef.current.pause();
+      URL.revokeObjectURL(audioRef.current.src);
+      audioRef.current = null;
+    }
+    
+    // Cancel animation frame
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    
+    // Reset all state
+    setAudioFile(null);
+    setAudioBuffer(null);
+    setMidiData([]);
+    setIsProcessing(false);
+    setProcessingProgress(0);
+    setCurrentTime(0);
+    setDuration(0);
+    setIsPlaying(false);
+    
+    toast.success("Ready for new audio file");
   };
 
   const createMidiFile = (notes: MidiNote[]): Uint8Array => {
@@ -369,15 +399,23 @@ const Index = () => {
         {audioFile && !isProcessing && (
           <div className="space-y-6">
             {/* Control Panel */}
-            <ControlPanel
-              isPlaying={isPlaying}
-              onPlayPause={handlePlayPause}
-              currentTime={currentTime}
-              duration={duration}
-              onSeek={handleSeek}
-              onExport={handleExportMidi}
-              canExport={midiData.length > 0}
-            />
+            <div className="flex items-center justify-between">
+              <ControlPanel
+                isPlaying={isPlaying}
+                onPlayPause={handlePlayPause}
+                currentTime={currentTime}
+                duration={duration}
+                onSeek={handleSeek}
+                onExport={handleExportMidi}
+                canExport={midiData.length > 0}
+              />
+              <button
+                onClick={handleReset}
+                className="px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 transition-colors"
+              >
+                Upload Another File
+              </button>
+            </div>
 
             {/* Waveform */}
             <div className="bg-card rounded-lg p-6 shadow-card">

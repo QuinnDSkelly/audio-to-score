@@ -38,13 +38,13 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     const height = rect.height;
 
     // Piano roll dimensions
-    const pianoWidth = 60;
+    const pianoWidth = 80;
     const rollWidth = width - pianoWidth;
-    const noteHeight = 20;
+    const noteHeight = height / 61; // 61 keys from C2 to C7
     const minPitch = 36; // C2
     const maxPitch = 96; // C7
     const pitchRange = maxPitch - minPitch;
-    const rollHeight = pitchRange * noteHeight;
+    const rollHeight = height;
 
     // Clear canvas and get colors
     const computedStyle = getComputedStyle(document.documentElement);
@@ -60,9 +60,9 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     ctx.fillRect(0, 0, width, height);
 
     // Draw piano keys
-    for (let pitch = minPitch; pitch <= maxPitch; pitch++) {
+    for (let pitch = maxPitch; pitch >= minPitch; pitch--) {
       const { noteIndex, noteName, octave, isBlackKey } = getNoteInfo(pitch);
-      const y = height - ((pitch - minPitch) * noteHeight) - noteHeight;
+      const y = ((maxPitch - pitch) * noteHeight);
       
       // Key background
       ctx.fillStyle = isBlackKey ? `hsl(${pianoBlack})` : `hsl(${pianoWhite})`;
@@ -70,15 +70,15 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       
       // Key border
       ctx.strokeStyle = `hsl(${borderColor})`;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 0.5;
       ctx.strokeRect(0, y, pianoWidth, noteHeight);
       
-      // Note label (only for C notes to avoid clutter)
-      if (noteIndex === 0) {
+      // Note label (only for C notes and octave markers)
+      if (noteIndex === 0 || (noteIndex === 0 && octave % 2 === 0)) {
         ctx.fillStyle = isBlackKey ? `hsl(${pianoWhite})` : `hsl(${pianoBlack})`;
-        ctx.font = '10px monospace';
+        ctx.font = '9px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(`${noteName}${octave}`, pianoWidth / 2, y + noteHeight / 2 + 3);
+        ctx.fillText(`${noteName}${octave}`, pianoWidth / 2, y + noteHeight / 2 + 2);
       }
     }
 
@@ -93,7 +93,7 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     
     // Horizontal lines (pitches)
     for (let pitch = minPitch; pitch <= maxPitch; pitch++) {
-      const y = height - ((pitch - minPitch) * noteHeight);
+      const y = (maxPitch - pitch) * noteHeight;
       ctx.beginPath();
       ctx.moveTo(pianoWidth, y);
       ctx.lineTo(width, y);
@@ -117,7 +117,7 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       
       const x = pianoWidth + (note.time / duration) * rollWidth;
       const noteWidth = Math.max((note.duration / duration) * rollWidth, 3);
-      const y = height - ((note.pitch - minPitch + 1) * noteHeight);
+      const y = (maxPitch - note.pitch) * noteHeight;
       
       console.log(`Note ${index}: pitch=${note.pitch}, time=${note.time}, duration=${note.duration}, x=${x}, y=${y}, width=${noteWidth}`);
       
