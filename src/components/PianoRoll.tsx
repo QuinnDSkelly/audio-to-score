@@ -47,7 +47,17 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     const rollHeight = pitchRange * noteHeight;
 
     // Clear canvas
-    ctx.fillStyle = 'hsl(var(--background))';
+    const computedStyle = getComputedStyle(canvas);
+    const backgroundColor = computedStyle.getPropertyValue('--background').trim();
+    const pianoWhite = computedStyle.getPropertyValue('--piano-white').trim();
+    const pianoBlack = computedStyle.getPropertyValue('--piano-black').trim();
+    const borderColor = computedStyle.getPropertyValue('--border').trim();
+    const cardColor = computedStyle.getPropertyValue('--card').trim();
+    const primaryColor = computedStyle.getPropertyValue('--primary').trim();
+    const noteActiveColor = computedStyle.getPropertyValue('--note-active').trim();
+    const accentColor = computedStyle.getPropertyValue('--accent').trim();
+    
+    ctx.fillStyle = `hsl(${backgroundColor})`;
     ctx.fillRect(0, 0, width, height);
 
     // Draw piano keys
@@ -56,17 +66,17 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       const y = height - ((pitch - minPitch) * noteHeight) - noteHeight;
       
       // Key background
-      ctx.fillStyle = isBlackKey ? 'hsl(var(--piano-black))' : 'hsl(var(--piano-white))';
+      ctx.fillStyle = isBlackKey ? `hsl(${pianoBlack})` : `hsl(${pianoWhite})`;
       ctx.fillRect(0, y, pianoWidth, noteHeight);
       
       // Key border
-      ctx.strokeStyle = 'hsl(var(--border))';
+      ctx.strokeStyle = `hsl(${borderColor})`;
       ctx.lineWidth = 1;
       ctx.strokeRect(0, y, pianoWidth, noteHeight);
       
       // Note label (only for C notes to avoid clutter)
       if (noteIndex === 0) {
-        ctx.fillStyle = isBlackKey ? 'hsl(var(--piano-white))' : 'hsl(var(--piano-black))';
+        ctx.fillStyle = isBlackKey ? `hsl(${pianoWhite})` : `hsl(${pianoBlack})`;
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
         ctx.fillText(`${noteName}${octave}`, pianoWidth / 2, y + noteHeight / 2 + 3);
@@ -74,11 +84,12 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     }
 
     // Draw roll background
-    ctx.fillStyle = 'hsl(var(--card))';
+    ctx.fillStyle = `hsl(${cardColor})`;
     ctx.fillRect(pianoWidth, 0, rollWidth, height);
 
     // Draw grid lines
-    ctx.strokeStyle = 'hsl(var(--border) / 0.3)';
+    const borderHSL = borderColor.split(' ').map(v => v.replace('%', ''));
+    ctx.strokeStyle = `hsla(${borderHSL[0]}, ${borderHSL[1]}%, ${borderHSL[2]}%, 0.3)`;
     ctx.lineWidth = 1;
     
     // Horizontal lines (pitches)
@@ -110,12 +121,15 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       const isActive = currentTime >= note.time && currentTime <= note.time + note.duration;
       const alpha = note.velocity / 127;
       
+      const noteActiveHSL = noteActiveColor.split(' ').map(v => v.replace('%', ''));
+      const primaryHSL = primaryColor.split(' ').map(v => v.replace('%', ''));
+      
       if (isActive) {
-        ctx.fillStyle = `hsl(var(--note-active) / ${alpha})`;
-        ctx.shadowColor = 'hsl(var(--note-active))';
+        ctx.fillStyle = `hsla(${noteActiveHSL[0]}, ${noteActiveHSL[1]}%, ${noteActiveHSL[2]}%, ${alpha})`;
+        ctx.shadowColor = `hsl(${noteActiveColor})`;
         ctx.shadowBlur = 10;
       } else {
-        ctx.fillStyle = `hsl(var(--primary) / ${alpha * 0.7})`;
+        ctx.fillStyle = `hsla(${primaryHSL[0]}, ${primaryHSL[1]}%, ${primaryHSL[2]}%, ${alpha * 0.7})`;
         ctx.shadowBlur = 0;
       }
       
@@ -123,7 +137,7 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       ctx.shadowBlur = 0;
       
       // Note border
-      ctx.strokeStyle = isActive ? 'hsl(var(--note-active))' : 'hsl(var(--primary))';
+      ctx.strokeStyle = isActive ? `hsl(${noteActiveColor})` : `hsl(${primaryColor})`;
       ctx.lineWidth = 1;
       ctx.strokeRect(x, y, Math.max(noteWidth, 2), noteHeight - 2);
     });
@@ -131,7 +145,7 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     // Draw playhead
     if (duration > 0) {
       const playheadX = pianoWidth + (currentTime / duration) * rollWidth;
-      ctx.strokeStyle = 'hsl(var(--accent))';
+      ctx.strokeStyle = `hsl(${accentColor})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
