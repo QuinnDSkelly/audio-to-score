@@ -73,13 +73,21 @@ export const ControlPanel = ({
             </span>
           </div>
           
-          <Slider
-            value={[currentTime]}
-            max={duration}
-            step={0.1}
-            onValueChange={handleSeek}
-            className="w-full"
-          />
+          <div className="relative w-full">
+            <Slider
+              value={[currentTime]}
+              max={duration}
+              step={0.1}
+              onValueChange={handleSeek}
+              className="w-full"
+            />
+            {/* Start and end markers */}
+            <div className="absolute left-0 top-6 w-2 h-2 bg-primary rounded-full border-2 border-background shadow-sm" />
+            <div className="absolute right-0 top-6 w-2 h-2 bg-destructive rounded-full border-2 border-background shadow-sm" />
+            {/* Progress indicators */}
+            <div className="absolute left-0 top-8 text-xs text-muted-foreground font-mono">START</div>
+            <div className="absolute right-0 top-8 text-xs text-muted-foreground font-mono text-right">END</div>
+          </div>
         </div>
 
         {/* Export Controls */}

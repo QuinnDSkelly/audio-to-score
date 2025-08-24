@@ -38,6 +38,39 @@ const Index = () => {
     
     console.log(`Processing audio: ${channelData.length} samples, ${sampleRate} Hz`);
     
+    // Improved tempo detection using onset detection
+    const detectTempo = (data: Float32Array) => {
+      const onsets: number[] = [];
+      const threshold = 0.01;
+      const windowSize = 1024;
+      
+      // Detect energy peaks for onset detection
+      for (let i = windowSize; i < data.length - windowSize; i += hopSize) {
+        const currentEnergy = getRMS(data.slice(i, i + windowSize));
+        const previousEnergy = getRMS(data.slice(i - windowSize, i));
+        
+        if (currentEnergy > threshold && currentEnergy > previousEnergy * 1.5) {
+          onsets.push(i / sampleRate);
+        }
+      }
+      
+      if (onsets.length < 2) return 120; // Default tempo
+      
+      // Calculate intervals between onsets
+      const intervals = onsets.slice(1).map((onset, i) => onset - onsets[i]);
+      const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
+      
+      // Convert to BPM (assuming quarter note intervals)
+      const bpm = Math.round(60 / avgInterval);
+      return Math.max(60, Math.min(200, bpm)); // Clamp to reasonable range
+    };
+    
+    const tempo = detectTempo(channelData);
+    const beatDuration = 60 / tempo;
+    const quantizeUnit = beatDuration / 4; // 16th note quantization
+    
+    console.log(`Detected tempo: ${tempo} BPM, beat duration: ${beatDuration}s`);
+    
     for (let i = 0; i < channelData.length - windowSize; i += hopSize) {
       const window = channelData.slice(i, i + windowSize);
       const time = i / sampleRate;
@@ -56,23 +89,26 @@ const Index = () => {
         
         // Improved amplitude threshold and velocity calculation
         if (amplitude > 0.005) {
+          // Quantize timing to musical grid
+          const quantizedTime = Math.round(time / quantizeUnit) * quantizeUnit;
+          
           // Check if this continues a previous note
           const lastNote = notes[notes.length - 1];
           const pitchTolerance = 0.5; // tighter tolerance
           
           if (lastNote && 
               Math.abs(lastNote.pitch - midiNote) <= pitchTolerance && 
-              time - (lastNote.time + lastNote.duration) < 0.05) {
+              Math.abs(quantizedTime - (lastNote.time + lastNote.duration)) < quantizeUnit) {
             // Extend the previous note and update velocity to max
-            lastNote.duration = time - lastNote.time + hopSize / sampleRate;
-            lastNote.velocity = Math.max(lastNote.velocity, Math.min(127, Math.floor(amplitude * 200 + 30)));
+            lastNote.duration = quantizedTime - lastNote.time + quantizeUnit;
+            lastNote.velocity = Math.max(lastNote.velocity, Math.min(127, Math.floor(amplitude * 300 + 40)));
           } else {
             // Create new note with better velocity scaling
-            const velocity = Math.min(127, Math.max(20, Math.floor(amplitude * 200 + 30)));
+            const velocity = Math.min(127, Math.max(40, Math.floor(amplitude * 300 + 40)));
             notes.push({
-              time: Math.round(time * 100) / 100, // Round to centiseconds
+              time: quantizedTime,
               pitch: midiNote,
-              duration: hopSize / sampleRate,
+              duration: quantizeUnit, // Start with minimum duration
               velocity
             });
           }
@@ -80,15 +116,15 @@ const Index = () => {
       }
     }
     
-    // Filter and clean up notes
+    // Filter and clean up notes with musical durations
     const cleanedNotes = notes
-      .filter(note => note.duration >= 0.05 && note.pitch >= 36 && note.pitch <= 96) // C2 to C7
+      .filter(note => note.duration >= quantizeUnit && note.pitch >= 36 && note.pitch <= 96) // C2 to C7
       .map(note => ({
         ...note,
-        duration: Math.max(0.1, Math.round(note.duration * 10) / 10) // Minimum 100ms, rounded to 100ms
+        duration: Math.max(quantizeUnit, Math.round(note.duration / quantizeUnit) * quantizeUnit) // Snap to musical grid
       }));
     
-    console.log(`Detected ${cleanedNotes.length} notes`);
+    console.log(`Detected ${cleanedNotes.length} notes with tempo ${tempo} BPM`);
     return cleanedNotes;
   };
 
