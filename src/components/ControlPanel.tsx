@@ -62,8 +62,8 @@ export const ControlPanel = ({
           </Button>
         </div>
 
-        {/* Time Display and Seek - Expanded */}
-        <div className="flex-1 mx-6 min-w-80 max-w-2xl">
+        {/* Time Display and Seek */}
+        <div className="flex-1 mx-4 min-w-60 max-w-lg">
           <div className="flex items-center justify-between mb-2 px-2">
             <span className="text-sm font-mono text-muted-foreground font-semibold">
               {formatTime(currentTime)}

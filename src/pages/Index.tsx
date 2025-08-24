@@ -32,127 +32,152 @@ const Index = () => {
     const channelData = audioBuffer.getChannelData(0);
     const notes: MidiNote[] = [];
     
-    const windowSize = 4096;
-    const hopSize = 2048; // Larger hop to reduce overlapping analysis
-    const minFreq = 80; // Higher minimum frequency
-    const maxFreq = 2000;
-    
     console.log(`Processing audio: ${channelData.length} samples, ${sampleRate} Hz`);
     
-    // Enhanced tempo detection with beat tracking
+    // Simple but effective pitch detection using FFT
+    const windowSize = 2048;
+    const hopSize = 512;
+    const minFreq = 80;
+    const maxFreq = 2000;
+    
+    // Detect tempo by finding onset patterns
     const detectTempo = (data: Float32Array) => {
-      const spectralFlux = [];
-      const windowSize = 2048;
-      const hopSize = 512;
-      
-      // Calculate spectral flux for onset detection
-      for (let i = 0; i < data.length - windowSize * 2; i += hopSize) {
-        const window1 = data.slice(i, i + windowSize);
-        const window2 = data.slice(i + windowSize, i + windowSize * 2);
-        
-        const energy1 = getRMS(window1);
-        const energy2 = getRMS(window2);
-        
-        const flux = Math.max(0, energy2 - energy1);
-        spectralFlux.push({ time: i / sampleRate, flux });
-      }
-      
-      // Find peaks in spectral flux
       const onsets = [];
-      const threshold = Math.max(...spectralFlux.map(f => f.flux)) * 0.3;
+      const threshold = 0.05;
       
-      for (let i = 1; i < spectralFlux.length - 1; i++) {
-        if (spectralFlux[i].flux > threshold &&
-            spectralFlux[i].flux > spectralFlux[i - 1].flux &&
-            spectralFlux[i].flux > spectralFlux[i + 1].flux) {
-          onsets.push(spectralFlux[i].time);
+      // Find energy peaks as onsets
+      for (let i = windowSize; i < data.length - windowSize; i += hopSize) {
+        const currentEnergy = getRMS(data.slice(i, i + windowSize));
+        const previousEnergy = getRMS(data.slice(i - windowSize, i));
+        
+        if (currentEnergy > previousEnergy * 1.5 && currentEnergy > threshold) {
+          onsets.push(i / sampleRate);
         }
       }
       
-      if (onsets.length < 3) return 120;
+      if (onsets.length < 2) return 100; // Default fallback
       
-      // Calculate inter-onset intervals
+      // Calculate intervals between onsets
       const intervals = [];
       for (let i = 1; i < onsets.length; i++) {
-        intervals.push(onsets[i] - onsets[i - 1]);
+        const interval = onsets[i] - onsets[i - 1];
+        if (interval > 0.3 && interval < 3.0) {
+          intervals.push(interval);
+        }
       }
       
-      // Find most common interval (tempo)
+      if (intervals.length === 0) return 100;
+      
+      // Find median interval and convert to BPM
       intervals.sort((a, b) => a - b);
       const medianInterval = intervals[Math.floor(intervals.length / 2)];
-      const bpm = Math.round(60 / medianInterval);
+      const bpm = 60 / medianInterval;
       
-      return Math.max(60, Math.min(180, bpm));
+      return Math.round(Math.max(60, Math.min(200, bpm)));
     };
     
-    const tempo = detectTempo(channelData);
-    const beatDuration = 60 / tempo;
-    const quantizeUnit = beatDuration / 4; // Quarter note quantization
+    const detectedTempo = detectTempo(channelData);
+    console.log(`Detected tempo: ${detectedTempo} BPM`);
     
-    console.log(`Detected tempo: ${tempo} BPM, beat duration: ${beatDuration}s, quantize: ${quantizeUnit}s`);
-    
-    const detectedNotes = new Map<string, MidiNote>();
+    // Analyze audio in overlapping windows
+    const detectedNotes: MidiNote[] = [];
     
     for (let i = 0; i < channelData.length - windowSize; i += hopSize) {
       const window = channelData.slice(i, i + windowSize);
       const time = i / sampleRate;
       
-      // Apply Hamming window
+      // Get RMS amplitude
+      const amplitude = getRMS(window);
+      if (amplitude < 0.01) continue; // Skip quiet sections
+      
+      // Apply windowing function
+      const windowedData = new Float32Array(windowSize);
       for (let j = 0; j < windowSize; j++) {
-        window[j] *= 0.54 - 0.46 * Math.cos(2 * Math.PI * j / (windowSize - 1));
+        windowedData[j] = window[j] * (0.54 - 0.46 * Math.cos(2 * Math.PI * j / (windowSize - 1)));
       }
       
-      const pitch = detectPitchFromWindow(window, sampleRate, minFreq, maxFreq);
-      const amplitude = getRMS(window);
+      // Simple FFT-based pitch detection
+      const frequencies = performFFT(windowedData, sampleRate);
+      const dominantFreq = findDominantFrequency(frequencies, minFreq, maxFreq);
       
-      // Only process significant pitches
-      if (pitch > minFreq && pitch < maxFreq && amplitude > 0.01) {
-        const midiNote = frequencyToMidi(pitch);
+      if (dominantFreq > minFreq && dominantFreq < maxFreq) {
+        const midiNote = frequencyToMidi(dominantFreq);
         
-        // Only accept valid MIDI range
+        // Only accept notes in reasonable MIDI range
         if (midiNote >= 36 && midiNote <= 96) {
-          const quantizedTime = Math.round(time / quantizeUnit) * quantizeUnit;
-          const noteKey = `${midiNote}-${quantizedTime}`;
+          const velocity = Math.min(127, Math.max(40, Math.floor(amplitude * 127)));
           
-          // Use map to prevent exact duplicates
-          if (!detectedNotes.has(noteKey)) {
-            const velocity = Math.min(127, Math.max(40, Math.floor(amplitude * 150 + 50)));
-            detectedNotes.set(noteKey, {
-              time: quantizedTime,
-              pitch: midiNote,
-              duration: quantizeUnit,
-              velocity
-            });
-          }
+          detectedNotes.push({
+            time,
+            pitch: midiNote,
+            duration: hopSize / sampleRate,
+            velocity
+          });
         }
       }
     }
     
-    // Convert map to array and sort by time
-    const sortedNotes = Array.from(detectedNotes.values()).sort((a, b) => a.time - b.time);
+    // Clean up notes - merge similar notes and remove duplicates
+    const cleanedNotes: MidiNote[] = [];
+    let lastNote: MidiNote | null = null;
     
-    // Merge consecutive notes of same pitch
-    const finalNotes: MidiNote[] = [];
-    let currentNote: MidiNote | null = null;
-    
-    for (const note of sortedNotes) {
-      if (currentNote && 
-          currentNote.pitch === note.pitch && 
-          Math.abs(note.time - (currentNote.time + currentNote.duration)) <= quantizeUnit / 2) {
-        // Extend current note
-        currentNote.duration = note.time + note.duration - currentNote.time;
-        currentNote.velocity = Math.max(currentNote.velocity, note.velocity);
+    for (const note of detectedNotes) {
+      if (!lastNote || 
+          Math.abs(lastNote.pitch - note.pitch) > 1 || 
+          note.time - (lastNote.time + lastNote.duration) > 0.1) {
+        // New note
+        if (lastNote) cleanedNotes.push(lastNote);
+        lastNote = { ...note };
       } else {
-        // Start new note
-        if (currentNote) finalNotes.push(currentNote);
-        currentNote = { ...note };
+        // Extend existing note
+        lastNote.duration = note.time + note.duration - lastNote.time;
+        lastNote.velocity = Math.max(lastNote.velocity, note.velocity);
       }
     }
     
-    if (currentNote) finalNotes.push(currentNote);
+    if (lastNote) cleanedNotes.push(lastNote);
     
-    console.log(`Detected ${finalNotes.length} unique notes with tempo ${tempo} BPM`);
-    return { notes: finalNotes, tempo };
+    console.log(`Detected ${cleanedNotes.length} notes with tempo ${detectedTempo} BPM`);
+    
+    return { notes: cleanedNotes, tempo: detectedTempo };
+  };
+
+  // Simple FFT for frequency analysis
+  const performFFT = (data: Float32Array, sampleRate: number) => {
+    const N = data.length;
+    const frequencies: { freq: number; magnitude: number }[] = [];
+    
+    // Simple magnitude spectrum calculation
+    for (let k = 1; k < N / 2; k++) {
+      const freq = (k * sampleRate) / N;
+      let real = 0, imag = 0;
+      
+      for (let n = 0; n < N; n++) {
+        const angle = -2 * Math.PI * k * n / N;
+        real += data[n] * Math.cos(angle);
+        imag += data[n] * Math.sin(angle);
+      }
+      
+      const magnitude = Math.sqrt(real * real + imag * imag);
+      frequencies.push({ freq, magnitude });
+    }
+    
+    return frequencies;
+  };
+
+  // Find the dominant frequency in the spectrum
+  const findDominantFrequency = (frequencies: { freq: number; magnitude: number }[], minFreq: number, maxFreq: number) => {
+    let maxMagnitude = 0;
+    let dominantFreq = 0;
+    
+    for (const { freq, magnitude } of frequencies) {
+      if (freq >= minFreq && freq <= maxFreq && magnitude > maxMagnitude) {
+        maxMagnitude = magnitude;
+        dominantFreq = freq;
+      }
+    }
+    
+    return dominantFreq;
   };
 
   const calculateTempoFromNotes = (notes: MidiNote[]): number => {

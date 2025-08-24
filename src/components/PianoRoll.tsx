@@ -38,13 +38,13 @@ export const PianoRoll = ({ midiData, currentTime, duration, tempo = 120 }: Pian
     const width = rect.width;
     const height = rect.height;
 
-    // Piano roll dimensions
-    const pianoWidth = 100; // Wider piano for better labels
+    // Piano roll dimensions with better spacing
+    const pianoWidth = 80;
     const rollWidth = width - pianoWidth;
-    const noteHeight = Math.max(12, height / 61); // Minimum height for legibility
     const minPitch = 36; // C2
     const maxPitch = 96; // C7
     const pitchRange = maxPitch - minPitch;
+    const noteHeight = Math.max(8, height / pitchRange); // Smaller notes for better visibility
     const rollHeight = height;
 
     // Clear canvas and get colors
@@ -74,13 +74,13 @@ export const PianoRoll = ({ midiData, currentTime, duration, tempo = 120 }: Pian
       ctx.lineWidth = 0.5;
       ctx.strokeRect(0, y, pianoWidth, noteHeight);
       
-      // Only show C note labels for cleaner appearance
-      if (noteIndex === 0) { // C notes only
+      // Show C note labels clearly
+      if (noteIndex === 0 && noteHeight >= 12) { // C notes only, if space allows
         const labelText = `C${octave}`;
         ctx.fillStyle = isBlackKey ? `hsl(${pianoWhite})` : `hsl(${pianoBlack})`;
-        ctx.font = '11px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(labelText, pianoWidth / 2, y + noteHeight / 2 + 4);
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(labelText, 4, y + noteHeight / 2 + 3);
       }
     }
 
@@ -170,15 +170,15 @@ export const PianoRoll = ({ midiData, currentTime, duration, tempo = 120 }: Pian
       ctx.lineWidth = 1;
       ctx.strokeRect(x, y, noteWidth, noteHeight - 1);
       
-      // Add note label if note is wide enough
-      if (noteWidth > 15 && noteHeight > 10) {
+      // Add note label if space allows
+      if (noteWidth > 20 && noteHeight >= 8) {
         const { noteName, octave } = getNoteInfo(note.pitch);
         ctx.fillStyle = isActive ? 
-          `hsl(${accent.h}, ${accent.s}%, 10%)` : 
-          `hsl(${primary.h}, ${primary.s}%, 95%)`;
+          `hsl(${accent.h}, ${accent.s}%, 15%)` : 
+          `hsl(${primary.h}, ${primary.s}%, 90%)`;
         ctx.font = '8px monospace';
         ctx.textAlign = 'left';
-        ctx.fillText(`${noteName}${octave}`, x + 2, y + noteHeight / 2 + 3);
+        ctx.fillText(`${noteName}${octave}`, x + 2, y + noteHeight / 2 + 2);
       }
     });
 
