@@ -37,8 +37,8 @@ export const ControlPanel = ({
   };
 
   return (
-    <Card className="p-6 bg-gradient-subtle w-full max-w-6xl mx-auto">
-      <div className="flex items-center justify-between gap-8">
+    <Card className="p-4 bg-gradient-subtle w-full">
+      <div className="flex items-center justify-between gap-6">
         {/* Transport Controls */}
         <div className="flex items-center space-x-4 flex-shrink-0">
           <Button
@@ -63,17 +63,17 @@ export const ControlPanel = ({
         </div>
 
         {/* Time Display and Seek - Expanded */}
-        <div className="flex-1 mx-12 min-w-96">
-          <div className="flex items-center justify-between mb-3 px-4">
-            <span className="text-base font-mono text-muted-foreground font-semibold">
+        <div className="flex-1 mx-6 min-w-80 max-w-2xl">
+          <div className="flex items-center justify-between mb-2 px-2">
+            <span className="text-sm font-mono text-muted-foreground font-semibold">
               {formatTime(currentTime)}
             </span>
-            <span className="text-base font-mono text-muted-foreground font-semibold">
+            <span className="text-sm font-mono text-muted-foreground font-semibold">
               {formatTime(duration)}
             </span>
           </div>
           
-          <div className="relative w-full px-4">
+          <div className="relative w-full px-2">
             <Slider
               value={[currentTime]}
               max={duration}

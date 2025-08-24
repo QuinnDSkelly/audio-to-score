@@ -5,12 +5,13 @@ interface PianoRollProps {
   midiData: MidiNote[];
   currentTime: number;
   duration: number;
+  tempo?: number;
 }
 
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const BLACK_KEYS = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
 
-export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) => {
+export const PianoRoll = ({ midiData, currentTime, duration, tempo = 120 }: PianoRollProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const getNoteInfo = (pitch: number) => {
@@ -101,10 +102,22 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
       ctx.stroke();
     }
     
-    // Vertical lines (time)
-    const timeStep = 1; // 1 second
+    // Vertical lines (time) - Based on musical beats
+    const beatDuration = 60 / tempo; // Duration of one beat in seconds
+    const timeStep = beatDuration / 2; // Half beats for better grid
+    
+    ctx.strokeStyle = `hsla(${borderHSL[0]}, ${borderHSL[1]}%, ${borderHSL[2]}%, 0.2)`;
+    
     for (let time = 0; time <= duration; time += timeStep) {
       const x = pianoWidth + (time / duration) * rollWidth;
+      const isBeat = Math.round(time / beatDuration) * beatDuration === time;
+      
+      // Make beat lines more prominent
+      ctx.lineWidth = isBeat ? 1.5 : 0.5;
+      ctx.strokeStyle = isBeat ? 
+        `hsla(${borderHSL[0]}, ${borderHSL[1]}%, ${borderHSL[2]}%, 0.5)` : 
+        `hsla(${borderHSL[0]}, ${borderHSL[1]}%, ${borderHSL[2]}%, 0.2)`;
+      
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);

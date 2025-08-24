@@ -23,52 +23,75 @@ const Index = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [detectedTempo, setDetectedTempo] = useState(120);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animationFrameRef = useRef<number>();
 
-  const detectPitchFromBuffer = (audioBuffer: AudioBuffer): MidiNote[] => {
+  const detectPitchFromBuffer = (audioBuffer: AudioBuffer): { notes: MidiNote[], tempo: number } => {
     const sampleRate = audioBuffer.sampleRate;
     const channelData = audioBuffer.getChannelData(0);
     const notes: MidiNote[] = [];
     
-    const windowSize = 4096; // Larger window for better pitch accuracy
-    const hopSize = 1024; // Larger hop size to reduce duplicates
-    const minFreq = 60; // ~B1
-    const maxFreq = 2000; // ~B6
+    const windowSize = 4096;
+    const hopSize = 2048; // Larger hop to reduce overlapping analysis
+    const minFreq = 80; // Higher minimum frequency
+    const maxFreq = 2000;
     
     console.log(`Processing audio: ${channelData.length} samples, ${sampleRate} Hz`);
     
-    // Improved tempo detection
+    // Enhanced tempo detection with beat tracking
     const detectTempo = (data: Float32Array) => {
-      const onsets: number[] = [];
-      const threshold = 0.015; // Higher threshold to reduce false onsets
-      const windowSize = 1024;
+      const spectralFlux = [];
+      const windowSize = 2048;
+      const hopSize = 512;
       
-      for (let i = windowSize; i < data.length - windowSize; i += hopSize) {
-        const currentEnergy = getRMS(data.slice(i, i + windowSize));
-        const previousEnergy = getRMS(data.slice(i - windowSize, i));
+      // Calculate spectral flux for onset detection
+      for (let i = 0; i < data.length - windowSize * 2; i += hopSize) {
+        const window1 = data.slice(i, i + windowSize);
+        const window2 = data.slice(i + windowSize, i + windowSize * 2);
         
-        if (currentEnergy > threshold && currentEnergy > previousEnergy * 2.0) { // Higher multiplier
-          onsets.push(i / sampleRate);
+        const energy1 = getRMS(window1);
+        const energy2 = getRMS(window2);
+        
+        const flux = Math.max(0, energy2 - energy1);
+        spectralFlux.push({ time: i / sampleRate, flux });
+      }
+      
+      // Find peaks in spectral flux
+      const onsets = [];
+      const threshold = Math.max(...spectralFlux.map(f => f.flux)) * 0.3;
+      
+      for (let i = 1; i < spectralFlux.length - 1; i++) {
+        if (spectralFlux[i].flux > threshold &&
+            spectralFlux[i].flux > spectralFlux[i - 1].flux &&
+            spectralFlux[i].flux > spectralFlux[i + 1].flux) {
+          onsets.push(spectralFlux[i].time);
         }
       }
       
-      if (onsets.length < 2) return 120;
+      if (onsets.length < 3) return 120;
       
-      const intervals = onsets.slice(1).map((onset, i) => onset - onsets[i]);
-      const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
-      const bpm = Math.round(60 / avgInterval);
-      return Math.max(60, Math.min(200, bpm));
+      // Calculate inter-onset intervals
+      const intervals = [];
+      for (let i = 1; i < onsets.length; i++) {
+        intervals.push(onsets[i] - onsets[i - 1]);
+      }
+      
+      // Find most common interval (tempo)
+      intervals.sort((a, b) => a - b);
+      const medianInterval = intervals[Math.floor(intervals.length / 2)];
+      const bpm = Math.round(60 / medianInterval);
+      
+      return Math.max(60, Math.min(180, bpm));
     };
     
     const tempo = detectTempo(channelData);
     const beatDuration = 60 / tempo;
-    const quantizeUnit = beatDuration / 8; // 8th note quantization for better timing
+    const quantizeUnit = beatDuration / 4; // Quarter note quantization
     
-    console.log(`Detected tempo: ${tempo} BPM, beat duration: ${beatDuration}s`);
+    console.log(`Detected tempo: ${tempo} BPM, beat duration: ${beatDuration}s, quantize: ${quantizeUnit}s`);
     
-    let lastValidPitch = 0;
-    let lastValidTime = 0;
+    const detectedNotes = new Map<string, MidiNote>();
     
     for (let i = 0; i < channelData.length - windowSize; i += hopSize) {
       const window = channelData.slice(i, i + windowSize);
@@ -80,63 +103,79 @@ const Index = () => {
       }
       
       const pitch = detectPitchFromWindow(window, sampleRate, minFreq, maxFreq);
+      const amplitude = getRMS(window);
       
-      if (pitch > 0) {
+      // Only process significant pitches
+      if (pitch > minFreq && pitch < maxFreq && amplitude > 0.01) {
         const midiNote = frequencyToMidi(pitch);
-        const amplitude = getRMS(window);
         
-        // Higher threshold and better filtering to reduce noise
-        if (amplitude > 0.008 && midiNote >= 36 && midiNote <= 96) {
+        // Only accept valid MIDI range
+        if (midiNote >= 36 && midiNote <= 96) {
           const quantizedTime = Math.round(time / quantizeUnit) * quantizeUnit;
+          const noteKey = `${midiNote}-${quantizedTime}`;
           
-          // Better duplicate filtering - check pitch difference and time separation
-          const pitchDifference = Math.abs(midiNote - lastValidPitch);
-          const timeDifference = quantizedTime - lastValidTime;
-          
-          // Only create note if pitch is different or enough time has passed
-          if (pitchDifference > 1 || timeDifference >= quantizeUnit) {
-            // Check if we should extend the last note instead
-            const lastNote = notes[notes.length - 1];
-            const pitchTolerance = 1; // Semitone tolerance
-            
-            if (lastNote && 
-                Math.abs(lastNote.pitch - midiNote) <= pitchTolerance && 
-                timeDifference < quantizeUnit * 2) {
-              // Extend the previous note
-              lastNote.duration = quantizedTime - lastNote.time + quantizeUnit;
-              lastNote.velocity = Math.max(lastNote.velocity, Math.min(127, Math.floor(amplitude * 200 + 60)));
-            } else {
-              // Create new note
-              const velocity = Math.min(127, Math.max(60, Math.floor(amplitude * 200 + 60)));
-              notes.push({
-                time: quantizedTime,
-                pitch: midiNote,
-                duration: quantizeUnit,
-                velocity
-              });
-              lastValidPitch = midiNote;
-              lastValidTime = quantizedTime;
-            }
+          // Use map to prevent exact duplicates
+          if (!detectedNotes.has(noteKey)) {
+            const velocity = Math.min(127, Math.max(40, Math.floor(amplitude * 150 + 50)));
+            detectedNotes.set(noteKey, {
+              time: quantizedTime,
+              pitch: midiNote,
+              duration: quantizeUnit,
+              velocity
+            });
           }
         }
       }
     }
     
-    // Final cleanup - merge notes that are too close together
-    const cleanedNotes = [];
-    let lastAddedNote = null;
+    // Convert map to array and sort by time
+    const sortedNotes = Array.from(detectedNotes.values()).sort((a, b) => a.time - b.time);
     
-    for (const note of notes) {
-      if (!lastAddedNote || 
-          Math.abs(note.pitch - lastAddedNote.pitch) > 1 ||
-          note.time - (lastAddedNote.time + lastAddedNote.duration) >= quantizeUnit / 2) {
-        cleanedNotes.push(note);
-        lastAddedNote = note;
+    // Merge consecutive notes of same pitch
+    const finalNotes: MidiNote[] = [];
+    let currentNote: MidiNote | null = null;
+    
+    for (const note of sortedNotes) {
+      if (currentNote && 
+          currentNote.pitch === note.pitch && 
+          Math.abs(note.time - (currentNote.time + currentNote.duration)) <= quantizeUnit / 2) {
+        // Extend current note
+        currentNote.duration = note.time + note.duration - currentNote.time;
+        currentNote.velocity = Math.max(currentNote.velocity, note.velocity);
+      } else {
+        // Start new note
+        if (currentNote) finalNotes.push(currentNote);
+        currentNote = { ...note };
       }
     }
     
-    console.log(`Detected ${cleanedNotes.length} unique notes with tempo ${tempo} BPM`);
-    return cleanedNotes;
+    if (currentNote) finalNotes.push(currentNote);
+    
+    console.log(`Detected ${finalNotes.length} unique notes with tempo ${tempo} BPM`);
+    return { notes: finalNotes, tempo };
+  };
+
+  const calculateTempoFromNotes = (notes: MidiNote[]): number => {
+    if (notes.length < 3) return 120;
+    
+    // Calculate intervals between note onsets
+    const intervals = [];
+    for (let i = 1; i < notes.length; i++) {
+      const interval = notes[i].time - notes[i - 1].time;
+      if (interval > 0.1 && interval < 4) { // Filter reasonable intervals
+        intervals.push(interval);
+      }
+    }
+    
+    if (intervals.length === 0) return 120;
+    
+    // Find the most common interval
+    intervals.sort((a, b) => a - b);
+    const medianInterval = intervals[Math.floor(intervals.length / 2)];
+    
+    // Convert to BPM (assuming quarter note intervals)
+    const bpm = Math.round(60 / medianInterval);
+    return Math.max(60, Math.min(200, bpm));
   };
 
   const detectPitchFromWindow = (window: Float32Array, sampleRate: number, minFreq: number, maxFreq: number): number => {
@@ -193,13 +232,14 @@ const Index = () => {
       setProcessingProgress(30);
       
       // Extract MIDI data from audio
-      const extractedNotes = detectPitchFromBuffer(buffer);
+      const result = detectPitchFromBuffer(buffer);
       setProcessingProgress(80);
       
-      setMidiData(extractedNotes);
+      setDetectedTempo(result.tempo);
+      setMidiData(result.notes);
       setProcessingProgress(100);
       
-      toast.success(`Audio processed successfully! Detected ${extractedNotes.length} notes.`);
+      toast.success(`Audio processed successfully! Detected ${result.notes.length} notes.`);
     } catch (error) {
       toast.error("Failed to process audio file");
       console.error(error);
@@ -280,6 +320,7 @@ const Index = () => {
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
+    setDetectedTempo(120);
     
     toast.success("Ready for new audio file");
   };
@@ -477,11 +518,17 @@ const Index = () => {
 
             {/* Piano Roll */}
             <div className="bg-card rounded-lg p-6 shadow-card">
-              <h3 className="text-lg font-semibold mb-4">Piano Roll</h3>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Piano Roll</h3>
+                <span className="text-sm text-muted-foreground">
+                  Tempo: {detectedTempo} BPM
+                </span>
+              </div>
               <PianoRoll
                 midiData={midiData}
                 currentTime={currentTime}
                 duration={duration}
+                tempo={detectedTempo}
               />
             </div>
           </div>
