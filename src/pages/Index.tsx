@@ -31,10 +31,12 @@ const Index = () => {
     const channelData = audioBuffer.getChannelData(0);
     const notes: MidiNote[] = [];
     
-    const windowSize = 4096;
-    const hopSize = 1024;
-    const minFreq = 80; // ~E2
+    const windowSize = 2048;
+    const hopSize = 512;
+    const minFreq = 60; // ~B1
     const maxFreq = 2000; // ~B6
+    
+    console.log(`Processing audio: ${channelData.length} samples, ${sampleRate} Hz`);
     
     for (let i = 0; i < channelData.length - windowSize; i += hopSize) {
       const window = channelData.slice(i, i + windowSize);
@@ -45,39 +47,49 @@ const Index = () => {
         window[j] *= 0.54 - 0.46 * Math.cos(2 * Math.PI * j / (windowSize - 1));
       }
       
-      // Simple autocorrelation for pitch detection
+      // Enhanced pitch detection
       const pitch = detectPitchFromWindow(window, sampleRate, minFreq, maxFreq);
       
       if (pitch > 0) {
         const midiNote = frequencyToMidi(pitch);
         const amplitude = getRMS(window);
         
-        // Only add note if it's loud enough
-        if (amplitude > 0.01) {
+        // Improved amplitude threshold and velocity calculation
+        if (amplitude > 0.005) {
           // Check if this continues a previous note
           const lastNote = notes[notes.length - 1];
-          const pitchTolerance = 1; // semitones
+          const pitchTolerance = 0.5; // tighter tolerance
           
           if (lastNote && 
               Math.abs(lastNote.pitch - midiNote) <= pitchTolerance && 
-              time - (lastNote.time + lastNote.duration) < 0.1) {
-            // Extend the previous note
+              time - (lastNote.time + lastNote.duration) < 0.05) {
+            // Extend the previous note and update velocity to max
             lastNote.duration = time - lastNote.time + hopSize / sampleRate;
+            lastNote.velocity = Math.max(lastNote.velocity, Math.min(127, Math.floor(amplitude * 200 + 30)));
           } else {
-            // Create new note
+            // Create new note with better velocity scaling
+            const velocity = Math.min(127, Math.max(20, Math.floor(amplitude * 200 + 30)));
             notes.push({
-              time,
+              time: Math.round(time * 100) / 100, // Round to centiseconds
               pitch: midiNote,
               duration: hopSize / sampleRate,
-              velocity: Math.min(127, Math.floor(amplitude * 500))
+              velocity
             });
           }
         }
       }
     }
     
-    // Filter out notes that are too short
-    return notes.filter(note => note.duration >= 0.1);
+    // Filter and clean up notes
+    const cleanedNotes = notes
+      .filter(note => note.duration >= 0.05 && note.pitch >= 36 && note.pitch <= 96) // C2 to C7
+      .map(note => ({
+        ...note,
+        duration: Math.max(0.1, Math.round(note.duration * 10) / 10) // Minimum 100ms, rounded to 100ms
+      }));
+    
+    console.log(`Detected ${cleanedNotes.length} notes`);
+    return cleanedNotes;
   };
 
   const detectPitchFromWindow = (window: Float32Array, sampleRate: number, minFreq: number, maxFreq: number): number => {
@@ -195,58 +207,101 @@ const Index = () => {
   };
 
   const createMidiFile = (notes: MidiNote[]): Uint8Array => {
-    // Simple MIDI file creation (Type 0, single track)
+    const ticksPerQuarter = 480; // Higher resolution
+    
+    // MIDI file header
     const header = new Uint8Array([
       0x4D, 0x54, 0x68, 0x64, // "MThd"
       0x00, 0x00, 0x00, 0x06, // Header length
       0x00, 0x00, // Format type 0
       0x00, 0x01, // Number of tracks
-      0x00, 0x60  // Ticks per quarter note (96)
+      (ticksPerQuarter >> 8) & 0xFF, ticksPerQuarter & 0xFF // Ticks per quarter note
     ]);
     
-    // Track header
-    const trackHeader = new Uint8Array([
-      0x4D, 0x54, 0x72, 0x6B // "MTrk"
-    ]);
-    
-    // Convert notes to MIDI events (simplified)
+    // Create MIDI events with proper timing
     const events: number[] = [];
-    notes.forEach(note => {
-      const deltaTime = Math.floor(note.time * 96); // Convert to ticks
-      const duration = Math.floor(note.duration * 96);
+    const sortedNotes = [...notes].sort((a, b) => a.time - b.time);
+    
+    let currentTime = 0;
+    const noteOffs: Array<{time: number, pitch: number}> = [];
+    
+    sortedNotes.forEach(note => {
+      const noteOnTime = note.time;
+      const noteOffTime = note.time + note.duration;
       
-      // Note on
-      events.push(deltaTime & 0x7F); // Delta time (simplified)
-      events.push(0x90); // Note on, channel 0
-      events.push(note.pitch);
-      events.push(note.velocity);
+      // Add note off events that occur before this note on
+      while (noteOffs.length > 0 && noteOffs[0].time <= noteOnTime) {
+        const noteOff = noteOffs.shift()!;
+        const deltaTime = Math.round((noteOff.time - currentTime) * ticksPerQuarter);
+        
+        // Write variable length delta time
+        writeVarLength(events, deltaTime);
+        events.push(0x80, noteOff.pitch, 0x40); // Note off
+        currentTime = noteOff.time;
+      }
       
-      // Note off
-      events.push(duration & 0x7F);
-      events.push(0x80); // Note off, channel 0
-      events.push(note.pitch);
-      events.push(0x40); // Release velocity
+      // Add note on event
+      const deltaTime = Math.round((noteOnTime - currentTime) * ticksPerQuarter);
+      writeVarLength(events, deltaTime);
+      events.push(0x90, note.pitch, note.velocity); // Note on
+      currentTime = noteOnTime;
+      
+      // Schedule note off
+      noteOffs.push({time: noteOffTime, pitch: note.pitch});
+      noteOffs.sort((a, b) => a.time - b.time);
     });
+    
+    // Add remaining note offs
+    while (noteOffs.length > 0) {
+      const noteOff = noteOffs.shift()!;
+      const deltaTime = Math.round((noteOff.time - currentTime) * ticksPerQuarter);
+      
+      writeVarLength(events, deltaTime);
+      events.push(0x80, noteOff.pitch, 0x40); // Note off
+      currentTime = noteOff.time;
+    }
     
     // End of track
     events.push(0x00, 0xFF, 0x2F, 0x00);
     
+    // Create track with proper header
     const trackData = new Uint8Array(events);
-    const trackLength = new Uint8Array(4);
-    const length = trackData.length;
-    trackLength[0] = (length >> 24) & 0xFF;
-    trackLength[1] = (length >> 16) & 0xFF;
-    trackLength[2] = (length >> 8) & 0xFF;
-    trackLength[3] = length & 0xFF;
+    const trackLength = trackData.length;
     
-    // Combine all parts
-    const result = new Uint8Array(header.length + trackHeader.length + trackLength.length + trackData.length);
+    const track = new Uint8Array(8 + trackLength);
+    track.set([0x4D, 0x54, 0x72, 0x6B], 0); // "MTrk"
+    track.set([
+      (trackLength >> 24) & 0xFF,
+      (trackLength >> 16) & 0xFF,
+      (trackLength >> 8) & 0xFF,
+      trackLength & 0xFF
+    ], 4);
+    track.set(trackData, 8);
+    
+    // Combine header and track
+    const result = new Uint8Array(header.length + track.length);
     result.set(header, 0);
-    result.set(trackHeader, header.length);
-    result.set(trackLength, header.length + trackHeader.length);
-    result.set(trackData, header.length + trackHeader.length + trackLength.length);
+    result.set(track, header.length);
     
     return result;
+  };
+  
+  const writeVarLength = (events: number[], value: number) => {
+    if (value < 0x80) {
+      events.push(value);
+    } else if (value < 0x4000) {
+      events.push((value >> 7) | 0x80);
+      events.push(value & 0x7F);
+    } else if (value < 0x200000) {
+      events.push((value >> 14) | 0x80);
+      events.push(((value >> 7) & 0x7F) | 0x80);
+      events.push(value & 0x7F);
+    } else {
+      events.push((value >> 21) | 0x80);
+      events.push(((value >> 14) & 0x7F) | 0x80);
+      events.push(((value >> 7) & 0x7F) | 0x80);
+      events.push(value & 0x7F);
+    }
   };
 
   // Cleanup audio on component unmount

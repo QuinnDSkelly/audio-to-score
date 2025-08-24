@@ -46,16 +46,15 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     const pitchRange = maxPitch - minPitch;
     const rollHeight = pitchRange * noteHeight;
 
-    // Clear canvas
-    const computedStyle = getComputedStyle(canvas);
-    const backgroundColor = computedStyle.getPropertyValue('--background').trim();
-    const pianoWhite = computedStyle.getPropertyValue('--piano-white').trim();
-    const pianoBlack = computedStyle.getPropertyValue('--piano-black').trim();
-    const borderColor = computedStyle.getPropertyValue('--border').trim();
-    const cardColor = computedStyle.getPropertyValue('--card').trim();
-    const primaryColor = computedStyle.getPropertyValue('--primary').trim();
-    const noteActiveColor = computedStyle.getPropertyValue('--note-active').trim();
-    const accentColor = computedStyle.getPropertyValue('--accent').trim();
+    // Clear canvas and get colors
+    const computedStyle = getComputedStyle(document.documentElement);
+    const backgroundColor = computedStyle.getPropertyValue('--background').trim() || '0 0% 100%';
+    const pianoWhite = computedStyle.getPropertyValue('--card').trim() || '0 0% 100%';
+    const pianoBlack = computedStyle.getPropertyValue('--muted').trim() || '0 0% 10%';
+    const borderColor = computedStyle.getPropertyValue('--border').trim() || '0 0% 89%';
+    const cardColor = computedStyle.getPropertyValue('--card').trim() || '0 0% 100%';
+    const primaryColor = computedStyle.getPropertyValue('--primary').trim() || '262 83% 58%';
+    const accentColor = computedStyle.getPropertyValue('--accent').trim() || '262 83% 58%';
     
     ctx.fillStyle = `hsl(${backgroundColor})`;
     ctx.fillRect(0, 0, width, height);
@@ -112,34 +111,50 @@ export const PianoRoll = ({ midiData, currentTime, duration }: PianoRollProps) =
     }
 
     // Draw MIDI notes
-    midiData.forEach(note => {
+    console.log(`Drawing ${midiData.length} notes`);
+    midiData.forEach((note, index) => {
+      if (note.pitch < minPitch || note.pitch > maxPitch) return;
+      
       const x = pianoWidth + (note.time / duration) * rollWidth;
-      const noteWidth = (note.duration / duration) * rollWidth;
-      const y = height - ((note.pitch - minPitch) * noteHeight) - noteHeight;
+      const noteWidth = Math.max((note.duration / duration) * rollWidth, 3);
+      const y = height - ((note.pitch - minPitch + 1) * noteHeight);
+      
+      console.log(`Note ${index}: pitch=${note.pitch}, time=${note.time}, duration=${note.duration}, x=${x}, y=${y}, width=${noteWidth}`);
       
       // Note rectangle
       const isActive = currentTime >= note.time && currentTime <= note.time + note.duration;
-      const alpha = note.velocity / 127;
+      const alpha = Math.max(0.3, Math.min(1.0, note.velocity / 127));
       
-      const noteActiveHSL = noteActiveColor.split(' ').map(v => v.replace('%', ''));
-      const primaryHSL = primaryColor.split(' ').map(v => v.replace('%', ''));
+      // Parse HSL values correctly
+      const parseHSL = (hslString: string) => {
+        const values = hslString.split(' ');
+        return {
+          h: parseFloat(values[0]) || 262,
+          s: parseFloat(values[1]?.replace('%', '')) || 83,
+          l: parseFloat(values[2]?.replace('%', '')) || 58
+        };
+      };
+      
+      const primary = parseHSL(primaryColor);
+      const accent = parseHSL(accentColor);
       
       if (isActive) {
-        ctx.fillStyle = `hsla(${noteActiveHSL[0]}, ${noteActiveHSL[1]}%, ${noteActiveHSL[2]}%, ${alpha})`;
-        ctx.shadowColor = `hsl(${noteActiveColor})`;
-        ctx.shadowBlur = 10;
+        ctx.fillStyle = `hsla(${accent.h}, ${accent.s}%, ${accent.l}%, ${alpha})`;
+        ctx.shadowColor = `hsl(${accent.h}, ${accent.s}%, ${accent.l}%)`;
+        ctx.shadowBlur = 8;
       } else {
-        ctx.fillStyle = `hsla(${primaryHSL[0]}, ${primaryHSL[1]}%, ${primaryHSL[2]}%, ${alpha * 0.7})`;
+        ctx.fillStyle = `hsla(${primary.h}, ${primary.s}%, ${primary.l}%, ${alpha})`;
         ctx.shadowBlur = 0;
       }
       
-      ctx.fillRect(x, y, Math.max(noteWidth, 2), noteHeight - 2);
+      // Draw note rectangle
+      ctx.fillRect(x, y, noteWidth, noteHeight - 1);
       ctx.shadowBlur = 0;
       
       // Note border
-      ctx.strokeStyle = isActive ? `hsl(${noteActiveColor})` : `hsl(${primaryColor})`;
+      ctx.strokeStyle = isActive ? `hsl(${accent.h}, ${accent.s}%, ${accent.l}%)` : `hsl(${primary.h}, ${primary.s}%, ${primary.l}%)`;
       ctx.lineWidth = 1;
-      ctx.strokeRect(x, y, Math.max(noteWidth, 2), noteHeight - 2);
+      ctx.strokeRect(x, y, noteWidth, noteHeight - 1);
     });
 
     // Draw playhead
